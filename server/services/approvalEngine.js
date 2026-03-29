@@ -23,19 +23,69 @@ exports.processExpenseSubmission = async (expense) => {
   }
 
   expense.status = 'pending';
-  // Let it be picked up by pending logic
-  
   await expense.save();
+
+  if (rule) {
+    const expenseWithRule = await Expense.findById(expense._id).populate('approvalRule');
+    await exports.assignNextApprover(expenseWithRule);
+  }
+  
   return expense;
 };
 
-// Simplified evaluation engine
+exports.assignNextApprover = async (expense) => {
+  const rule = expense.approvalRule;
+  
+  if (!rule || rule.workflowType === 'conditional') {
+    expense.currentAssignee = null;
+    await expense.save();
+    return;
+  }
+
+  const stepConfig = rule.approvers.find(a => a.step === expense.currentApprovalStep);
+  if (!stepConfig) {
+    expense.currentAssignee = null;
+    await expense.save();
+    return;
+  }
+
+  const User = require('../models/User');
+
+  if (stepConfig.user) {
+    expense.currentAssignee = stepConfig.user;
+  } else if (stepConfig.role) {
+    if (stepConfig.role === 'direct_manager') {
+      const submitter = await User.findById(expense.submittedBy);
+      if (submitter && submitter.manager) {
+        expense.currentAssignee = submitter.manager;
+      } else {
+        const admin = await User.findOne({ company: expense.company, role: 'admin' });
+        expense.currentAssignee = admin ? admin._id : null;
+      }
+    } else {
+      const targetUsers = await User.find({ company: expense.company, role: stepConfig.role });
+      
+      if (targetUsers.length > 0) {
+        const randomUser = targetUsers[Math.floor(Math.random() * targetUsers.length)];
+        expense.currentAssignee = randomUser._id;
+      } else {
+        const admin = await User.findOne({ company: expense.company, role: 'admin' });
+        expense.currentAssignee = admin ? admin._id : null;
+      }
+    }
+  }
+
+  await expense.save();
+};
+
 exports.evaluateApprovalState = async (expenseId) => {
-  const expense = await Expense.findById(expenseId).populate('approvalRule');
+  const expense = await Expense.findById(expenseId)
+    .populate('approvalRule')
+    .populate('approvalHistory.approver', 'role');
+  
   const rule = expense.approvalRule;
   
   if (!rule) {
-    // If no rules and manager approved, or no manager and no rules -> approved
     if (expense.approvalHistory.length > 0) {
       expense.status = 'approved';
       await expense.save();
@@ -43,21 +93,19 @@ exports.evaluateApprovalState = async (expenseId) => {
     return;
   }
 
-  // Check auto-approve logic
-  if (rule.conditionalRules && rule.conditionalRules.enabled) {
-    const history = expense.approvalHistory.filter(h => h.action === 'approved');
-    
+  const history = expense.approvalHistory.filter(h => h.action === 'approved');
+
+  // Conditional/parallel logic (unchanged)
+  if (rule.workflowType === 'conditional' || (rule.conditionalRules && rule.conditionalRules.enabled)) {
     let autoApprove = false;
 
-    // specific approver trigger
     if (rule.conditionalRules.specificApproverRule.enabled && rule.conditionalRules.specificApproverRule.autoApprove) {
-      const spApproverId = rule.conditionalRules.specificApproverRule.approver.toString();
-      if (history.some(h => h.approver.toString() === spApproverId)) {
+      const targetRole = rule.conditionalRules.specificApproverRule.role || 'admin';
+      if (history.some(h => h.approver && h.approver.role === targetRole)) {
         autoApprove = true;
       }
     }
 
-    // percentage trigger
     if (!autoApprove && rule.conditionalRules.percentageRule.enabled) {
       const requiredThreshold = rule.conditionalRules.percentageRule.percentage;
       const totalApprovers = rule.approvers.length;
@@ -74,12 +122,26 @@ exports.evaluateApprovalState = async (expenseId) => {
       await expense.save();
       return;
     }
+
+    if (rule.workflowType === 'conditional' && history.length >= rule.approvers.length) {
+      expense.status = 'approved';
+      await expense.save();
+      return;
+    }
+    
+    if (rule.workflowType === 'conditional') return;
   }
 
-  // Max step logic
+  expense.currentApprovalStep += 1;
+
   const maxStep = rule.approvers.reduce((max, a) => Math.max(max, a.step), 0);
+
   if (expense.currentApprovalStep > maxStep) {
     expense.status = 'approved';
+    expense.currentAssignee = null;
     await expense.save();
+  } else {
+    await expense.save(); // save the incremented step first
+    await exports.assignNextApprover(expense);
   }
 };

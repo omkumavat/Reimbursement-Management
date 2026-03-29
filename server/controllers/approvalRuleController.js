@@ -3,8 +3,9 @@ const ApprovalRule = require('../models/ApprovalRule');
 exports.getApprovalRules = async (req, res) => {
   try {
     const rules = await ApprovalRule.find({ company: req.user.company })
-      .populate('approvers.user', 'name role email')
-      .populate('conditionalRules.specificApproverRule.approver', 'name role email');
+      .populate('approvers.user', 'name role email');
+      // .populate('conditionalRules.specificApproverRule.approver', 'name role email');
+      // console.log(rules)
     res.status(200).json({ success: true, count: rules.length, data: rules });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

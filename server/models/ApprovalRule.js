@@ -4,22 +4,28 @@ const approverSchema = new mongoose.Schema({
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    default: null
+  },
+  role: {
+    type: String, // 'direct_manager', 'finance', 'director', 'manager', 'admin'
+    default: null
   },
   step: {
     type: Number,
     required: true
-  },
-  role: {
-    type: String
   }
-}, { _id: false });
+}, { _id: true });
 
 const approvalRuleSchema = new mongoose.Schema({
   company: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Company',
     required: true
+  },
+  workflowType: {
+    type: String,
+    enum: ['sequence', 'conditional'],
+    default: 'sequence'
   },
   name: {
     type: String,
@@ -41,10 +47,7 @@ const approvalRuleSchema = new mongoose.Schema({
     },
     specificApproverRule: {
       enabled: { type: Boolean, default: false },
-      approver: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-      },
+      role: { type: String, default: 'admin' },
       autoApprove: { type: Boolean, default: false }
     },
     hybridMode: {

@@ -13,6 +13,7 @@ import Dashboard from './pages/Dashboard';
 import Expenses from './pages/Expenses';
 import Approvals from './pages/Approvals';
 import Users from './pages/Users';
+import ApprovalRules from './pages/ApprovalRules';
 
 const ProtectedRoute = ({ children, roles }) => {
   const { user, loading } = useContext(AuthContext);
@@ -47,7 +48,7 @@ function App() {
           <Route path="/expenses" element={<ProtectedRoute><Expenses /></ProtectedRoute>} />
           
           <Route path="/approvals" element={
-            <ProtectedRoute roles={['manager', 'admin']}>
+            <ProtectedRoute roles={['manager', 'admin', 'finance', 'director']}>
               <Approvals />
             </ProtectedRoute>
           } />
@@ -55,6 +56,11 @@ function App() {
           <Route path="/users" element={
             <ProtectedRoute roles={['admin']}>
               <Users />
+            </ProtectedRoute>
+          } />
+          <Route path="/rules" element={
+            <ProtectedRoute roles={['admin']}>
+              <ApprovalRules />
             </ProtectedRoute>
           } />
         </Routes>

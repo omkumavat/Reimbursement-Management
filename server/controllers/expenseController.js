@@ -29,6 +29,9 @@ exports.submitExpense = async (req, res) => {
       status: 'pending' // Default starts pending
     });
 
+    const engine = require('../services/approvalEngine');
+    await engine.processExpenseSubmission(expense); // This attaches rule!
+
     res.status(201).json({ success: true, data: expense });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -71,6 +74,7 @@ exports.getExpense = async (req, res) => {
   try {
     const expense = await Expense.findById(req.params.id)
       .populate('submittedBy', 'name')
+      .populate('currentAssignee', 'name role email')
       .populate('approvalHistory.approver', 'name role');
     if (!expense) {
       return res.status(404).json({ success: false, error: 'Expense not found' });

@@ -17,12 +17,15 @@ const Sidebar = () => {
             <Link to="/expenses" className="block px-4 py-2 hover:bg-gray-800 rounded-md hover:text-white transition-colors">Expenses</Link>
           )}
           
-          {(user?.role === 'manager' || user?.role === 'admin') && (
+          {(['manager', 'admin', 'finance', 'director'].includes(user?.role)) && (
             <Link to="/approvals" className="block px-4 py-2 hover:bg-gray-800 rounded-md hover:text-white transition-colors">Approvals</Link>
           )}
           
           {user?.role === 'admin' && (
-            <Link to="/users" className="block px-4 py-2 hover:bg-gray-800 rounded-md hover:text-white transition-colors">Users</Link>
+            <>
+              <Link to="/users" className="block px-4 py-2 hover:bg-gray-800 rounded-md hover:text-white transition-colors">Users</Link>
+              <Link to="/rules" className="block px-4 py-2 hover:bg-gray-800 rounded-md hover:text-white transition-colors">Workflows</Link>
+            </>
           )}
         </nav>
       </div>

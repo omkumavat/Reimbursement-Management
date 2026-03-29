@@ -186,6 +186,9 @@ const Users = () => {
               <select value={formData.role} onChange={(e) => setFormData({...formData, role: e.target.value, manager: (e.target.value === 'manager' || e.target.value === 'admin') ? '' : formData.manager})} className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
                 <option value="employee">Employee</option>
                 <option value="manager">Manager</option>
+                <option value="finance">Finance</option>
+                <option value="director">Director</option>
+                <option value="admin">Admin</option>
               </select>
             </div>
             <div>

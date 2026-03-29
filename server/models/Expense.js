@@ -85,6 +85,10 @@ const expenseSchema = new mongoose.Schema({
     type: Number,
     default: 1
   },
+  currentAssignee: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   approvalHistory: [approvalHistorySchema],
   approvalRule: {
     type: mongoose.Schema.Types.ObjectId,

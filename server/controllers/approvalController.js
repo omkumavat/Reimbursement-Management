@@ -2,19 +2,56 @@ const Expense = require('../models/Expense');
 
 exports.getPendingApprovals = async (req, res) => {
   try {
-    // For now, simpler: Return all expenses pending for company if admin, or pending for team if manager
-    let expenses = [];
-    if (req.user.role === 'admin') {
-      expenses = await Expense.find({ company: req.user.company, status: { $in: ['pending', 'in_review'] } })
-        .populate('submittedBy', 'name email');
-    } else if (req.user.role === 'manager') {
-      const team = await require('../models/User').find({ manager: req.user._id });
-      const teamIds = team.map(u => u._id);
-      expenses = await Expense.find({ submittedBy: { $in: teamIds }, status: { $in: ['pending', 'in_review'] } })
-        .populate('submittedBy', 'name email');
-    }
+    const expenses = await Expense.find({ 
+      company: req.user.company, 
+      status: { $in: ['pending', 'in_review'] } 
+    })
+    .populate('submittedBy', 'name email manager isManagerApprover')
+    .populate('approvalRule');
 
-    res.status(200).json({ success: true, count: expenses.length, data: expenses });
+    const pendingForMe = expenses.filter(exp => {
+
+      if (exp.approvalHistory.some(h => h.approver.toString() === req.user._id.toString())) {
+        return false;
+      }
+
+      const rule = exp.approvalRule;
+      if (rule && rule.approvers && rule.approvers.length > 0) {
+        
+        if (rule.workflowType === 'conditional') {
+          // Parallel mode: Can they fulfill any of the parallel approver slots?
+          return rule.approvers.some(stepConfig => {
+            if (stepConfig.user && stepConfig.user.toString() === req.user._id.toString()) return true;
+            if (stepConfig.role) {
+              if (stepConfig.role === 'direct_manager') {
+                return exp.submittedBy.manager && exp.submittedBy.manager.toString() === req.user._id.toString();
+              }
+              return req.user.role === stepConfig.role;
+            }
+            return false;
+          });
+        } else {
+          // Sequential mode uses the specific randomly-assigned person
+          if (exp.currentAssignee) {
+             return exp.currentAssignee.toString() === req.user._id.toString();
+          } else {
+             // If unassigned somehow, allow fallback resolution by admin
+             if (req.user.role === 'admin') return true;
+             return false;
+          }
+        }
+
+      } else {
+        // Fallback or legacy (no custom rule defined for this expense)
+        if (req.user.role === 'manager' && exp.submittedBy.manager && exp.submittedBy.manager.toString() === req.user._id.toString()) {
+          return true;
+        }
+        if (req.user.role === 'admin') return true;
+        return false;
+      }
+    });
+
+    res.status(200).json({ success: true, count: pendingForMe.length, data: pendingForMe });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -27,8 +64,6 @@ exports.approveExpense = async (req, res) => {
     
     if (!expense) return res.status(404).json({ success: false, error: 'Not found' });
 
-    // Validate if the user is authorized for this step... skipped for simplicitly
-    // Add to history
     expense.approvalHistory.push({
       approver: req.user._id,
       step: expense.currentApprovalStep,
@@ -40,11 +75,12 @@ exports.approveExpense = async (req, res) => {
     expense.status = 'in_review';
     await expense.save();
 
-    res.status(200).json({ success: true, data: expense });
-    
-    // Evaluate if finalized async
+    // Evaluate if finalized
     const engine = require('../services/approvalEngine');
     await engine.evaluateApprovalState(expense._id);
+
+    const updatedExpense = await Expense.findById(expense._id);
+    res.status(200).json({ success: true, data: updatedExpense });
 
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
