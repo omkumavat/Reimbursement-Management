@@ -151,8 +151,10 @@ const Users = () => {
                   {u.role === 'employee' ? (u.manager?.name || 'Unassigned') : 'N/A'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
+                 {u.role === 'admin' ? 'N/A' : <>
                   <button onClick={() => openEditModal(u)} className="text-blue-600 hover:text-blue-900 mx-3 font-medium">Edit</button>
                   <button onClick={() => handleDelete(u._id)} className="text-red-600 hover:text-red-900 font-medium">Delete</button>
+                 </>}
                 </td>
               </tr>
             ))}

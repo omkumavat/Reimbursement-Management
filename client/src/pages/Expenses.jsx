@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import api from '../services/api';
 import Modal from '../components/common/Modal';
 import { useAuth } from '../hooks/useAuth';
-import Tesseract from 'tesseract.js';
 import axios from 'axios';
 
 const Expenses = () => {
@@ -11,15 +10,16 @@ const Expenses = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [countries, setCountries] = useState([]);
+  const [convertedPreview, setConvertedPreview] = useState(null);
   
   // Form State
   const [formData, setFormData] = useState({
     amount: '', currency: '', category: 'meals', description: '', date: '', merchantName: ''
   });
   const [file, setFile] = useState(null);
-  const [ocrScanning, setOcrScanning] = useState(false);
 
   useEffect(() => {
+    console.log(user)
     fetchExpenses();
     // Fetch currencies for the dropdown
     axios.get('https://restcountries.com/v3.1/all?fields=name,currencies').then(res => {
@@ -32,10 +32,43 @@ const Expenses = () => {
         }
       });
       setCountries(Array.from(uniqueCurrencies.entries()).sort());
-      
-      // Default to user company base currency if able, but normally user picks their incurred currency
     }).catch(err => console.error(err));
   }, []);
+
+  // Effect to calculate live conversion preview
+  useEffect(() => {
+    const calculateConversion = async () => {
+      if (!formData.amount || !formData.currency || isNaN(formData.amount)) {
+        setConvertedPreview(null);
+        return;
+      }
+      
+      const baseCur = user?.company?.defaultCurrency;
+      if (!baseCur) return;
+
+      if (formData.currency === baseCur) {
+        setConvertedPreview(Number(formData.amount));
+        return;
+      }
+
+      try {
+        const { data } = await axios.get(`https://api.exchangerate-api.com/v4/latest/${baseCur}`);
+        const rate = data.rates[formData.currency];
+        if (rate) {
+          setConvertedPreview(Number(formData.amount) / rate);
+        } else {
+          setConvertedPreview(null);
+        }
+      } catch(err) {
+        console.error('Failed to fetch conversion rates', err);
+        setConvertedPreview(null);
+      }
+    };
+    
+    const timeoutId = setTimeout(calculateConversion, 400); // 400ms debounce
+    return () => clearTimeout(timeoutId);
+  }, [formData.amount, formData.currency, user?.company?.defaultCurrency]);
+
 
   const fetchExpenses = async () => {
     try {
@@ -48,38 +81,8 @@ const Expenses = () => {
     }
   };
 
-  const handleFileChange = async (e) => {
-    const selectedFile = e.target.files[0];
-    setFile(selectedFile);
-
-    if (selectedFile && selectedFile.type.startsWith('image/')) {
-      setOcrScanning(true);
-      try {
-        const result = await Tesseract.recognize(selectedFile, 'eng', { logger: m => console.log(m) });
-        const text = result.data.text;
-        
-        // Simple heuristic extraction from OCR
-        const amountMatch = text.match(/[\$£€\u20B9]?[TtRrOoTtAaLl]?\s*(?:\$|USD|INR|Rs\.?)?\s*(\d{1,5}[\.,]\d{2})/i);
-        const dateMatch = text.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
-        
-        const updates = {};
-        if (amountMatch) updates.amount = amountMatch[1].replace(',', '.');
-        if (dateMatch) {
-          // Attempt to map to YYYY-MM-DD for standard input format
-          const dParts = dateMatch[1].split(/[\/\-]/);
-          if (dParts.length === 3) {
-            let year = dParts[2].length === 2 ? '20' + dParts[2] : dParts[2];
-            updates.date = `${year}-${dParts[0].padStart(2, '0')}-${dParts[1].padStart(2, '0')}`;
-          }
-        }
-        
-        setFormData(prev => ({ ...prev, ...updates }));
-      } catch (err) {
-        console.error('OCR Error:', err);
-      } finally {
-        setOcrScanning(false);
-      }
-    }
+  const handleFileChange = (e) => {
+    setFile(e.target.files[0] || null);
   };
 
   const handleSubmit = async (e) => {
@@ -96,6 +99,7 @@ const Expenses = () => {
       setIsModalOpen(false);
       setFormData({ amount: '', currency: '', category: 'meals', description: '', date: '', merchantName: '' });
       setFile(null);
+      setConvertedPreview(null);
       fetchExpenses();
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to submit expense');
@@ -156,13 +160,12 @@ const Expenses = () => {
         </table>
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Submit New Expense">
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Submit Expense">
         <form onSubmit={handleSubmit} className="space-y-4">
           
           <div className="col-span-2 border-2 border-dashed border-gray-300 p-4 rounded-lg bg-gray-50 text-center">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Upload Receipt (OCR Auto-scan)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Upload Receipt (Optional)</label>
             <input type="file" accept="image/*,.pdf" onChange={handleFileChange} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer" />
-            {ocrScanning && <p className="text-sm text-blue-600 mt-2 font-medium animate-pulse">Scanning receipt with AI...</p>}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -180,6 +183,13 @@ const Expenses = () => {
               </select>
             </div>
           </div>
+          
+          {convertedPreview !== null && formData.currency !== user?.company?.defaultCurrency && (
+            <div className="col-span-2 bg-blue-50 border border-blue-100 p-3 rounded-lg flex items-center justify-between">
+              <span className="text-sm font-medium text-blue-800">Company Base Currency Equivalent:</span>
+              <strong className="text-blue-900">{user?.company?.defaultCurrency} {convertedPreview.toFixed(2)}</strong>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -208,8 +218,8 @@ const Expenses = () => {
             <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-sm">
               Cancel
             </button>
-            <button type="submit" disabled={ocrScanning} className={`px-4 py-2 text-sm font-medium text-white border border-transparent rounded-md shadow-sm ${ocrScanning ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}>
-              Submit Expense
+            <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 border border-transparent rounded-md shadow-sm">
+              Publish Expense
             </button>
           </div>
         </form>
