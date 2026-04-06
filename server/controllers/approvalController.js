@@ -3,54 +3,52 @@ const Expense = require('../models/Expense');
 exports.getPendingApprovals = async (req, res) => {
   try {
     const expenses = await Expense.find({ 
-      company: req.user.company, 
-      status: { $in: ['pending', 'in_review'] } 
-    })
-    .populate('submittedBy', 'name email manager isManagerApprover')
-    .populate('approvalRule');
+  company: req.user.company, 
+  status: { $in: ['pending', 'in_review'] }
+})
+.populate('submittedBy', 'name email manager isManagerApprover')
+.populate('approvalRule')
+.populate('approvalHistory.approver', '_id role'); // ← add this
 
-    const pendingForMe = expenses.filter(exp => {
+const pendingForMe = expenses.filter(exp => {
+  // ✅ Safe check — skip if this user already acted
+  const alreadyActed = exp.approvalHistory.some(h => {
+    if (!h.approver) return false; // ← guard against null approver
+    return h.approver._id 
+      ? h.approver._id.toString() === req.user._id.toString()  // populated
+      : h.approver.toString() === req.user._id.toString();      // raw ObjectId
+  });
 
-      if (exp.approvalHistory.some(h => h.approver.toString() === req.user._id.toString())) {
-        return false;
-      }
+  if (alreadyActed) return false;
 
-      const rule = exp.approvalRule;
-      if (rule && rule.approvers && rule.approvers.length > 0) {
-        
-        if (rule.workflowType === 'conditional') {
-          // Parallel mode: Can they fulfill any of the parallel approver slots?
-          return rule.approvers.some(stepConfig => {
-            if (stepConfig.user && stepConfig.user.toString() === req.user._id.toString()) return true;
-            if (stepConfig.role) {
-              if (stepConfig.role === 'direct_manager') {
-                return exp.submittedBy.manager && exp.submittedBy.manager.toString() === req.user._id.toString();
-              }
-              return req.user.role === stepConfig.role;
-            }
-            return false;
-          });
-        } else {
-          // Sequential mode uses the specific randomly-assigned person
-          if (exp.currentAssignee) {
-             return exp.currentAssignee.toString() === req.user._id.toString();
-          } else {
-             // If unassigned somehow, allow fallback resolution by admin
-             if (req.user.role === 'admin') return true;
-             return false;
+  const rule = exp.approvalRule;
+  if (rule && rule.approvers && rule.approvers.length > 0) {
+    if (rule.workflowType === 'conditional') {
+      return rule.approvers.some(stepConfig => {
+        if (stepConfig.user && stepConfig.user.toString() === req.user._id.toString()) return true;
+        if (stepConfig.role) {
+          if (stepConfig.role === 'direct_manager') {
+            return exp.submittedBy.manager && 
+              exp.submittedBy.manager.toString() === req.user._id.toString();
           }
+          return req.user.role === stepConfig.role;
         }
-
-      } else {
-        // Fallback or legacy (no custom rule defined for this expense)
-        if (req.user.role === 'manager' && exp.submittedBy.manager && exp.submittedBy.manager.toString() === req.user._id.toString()) {
-          return true;
-        }
-        if (req.user.role === 'admin') return true;
         return false;
+      });
+    } else {
+      // Sequential — just check currentAssignee
+      if (exp.currentAssignee) {
+        return exp.currentAssignee.toString() === req.user._id.toString(); // ✅ this should now match
       }
-    });
-
+      return req.user.role === 'admin';
+    }
+  } else {
+    if (req.user.role === 'manager' && exp.submittedBy.manager &&
+      exp.submittedBy.manager.toString() === req.user._id.toString()) return true;
+    if (req.user.role === 'admin') return true;
+    return false;
+  }
+});
     res.status(200).json({ success: true, count: pendingForMe.length, data: pendingForMe });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -71,7 +69,6 @@ exports.approveExpense = async (req, res) => {
       comments
     });
     
-    expense.currentApprovalStep += 1;
     expense.status = 'in_review';
     await expense.save();
 
